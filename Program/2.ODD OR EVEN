@@ -1,0 +1,32 @@
+2. Odd or Even from a Given Set of Numbers
+
+#include <stdio.h>
+
+int main() {
+    int n, i, num;
+
+    printf("Enter how many numbers: ");
+    scanf("%d", &n);
+
+    printf("Enter %d numbers:\n", n);
+    for (i = 0; i < n; i++) {
+        scanf("%d", &num);
+        if (num % 2 == 0)
+            printf("%d is Even\n", num);
+        else
+            printf("%d is Odd\n", num);
+    }
+    return 0;
+}
+
+Sample Input:
+5
+10 7 22 3 8
+
+Sample Output:
+
+10 is Even
+7 is Odd
+22 is Even
+3 is Odd
+8 is Even
