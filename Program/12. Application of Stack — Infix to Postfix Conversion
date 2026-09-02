@@ -1,0 +1,64 @@
+ 12. Application of Stack — Infix to Postfix Conversion
+
+#include <stdio.h>
+#include <ctype.h>
+#include <string.h>
+
+#define MAX 100
+
+char stack[MAX];
+int top = -1;
+
+void push(char c) {
+    stack[++top] = c;
+}
+
+char pop() {
+    return stack[top--];
+}
+
+int precedence(char c) {
+    if (c == '+' || c == '-') return 1;
+    if (c == '*' || c == '/') return 2;
+    if (c == '^') return 3;
+    return 0;
+}
+
+int main() {
+    char infix[MAX], postfix[MAX];
+    int i = 0, j = 0;
+    char c;
+
+    printf("Enter infix expression: ");
+    scanf("%99s", infix);
+
+    while ((c = infix[i]) != '\0') {
+        if (isalnum(c)) {
+            postfix[j++] = c;
+        } else if (c == '(') {
+            push(c);
+        } else if (c == ')') {
+            while (top != -1 && stack[top] != '(')
+                postfix[j++] = pop();
+            pop();
+        } else {
+            while (top != -1 && precedence(stack[top]) >= precedence(c))
+                postfix[j++] = pop();
+            push(c);
+        }
+        i++;
+    }
+    while (top != -1)
+        postfix[j++] = pop();
+    postfix[j] = '\0';
+
+    printf("Postfix expression: %s\n", postfix);
+    return 0;
+}
+
+Sample Input:
+
+A+B*C-D/E
+
+Sample Output:
+Postfix expression: ABC*+DE/-
