@@ -1,0 +1,1830 @@
+/*
+===============================================================
+ CSA0305 - DATA STRUCTURES - SLOT A
+
+ Assignment:
+ Design an Intelligent Disaster-Relief Supply Chain
+ Using Graphs, Heaps and Priority Queues
+
+ Features:
+ 1. Weighted Graph using Adjacency List
+ 2. Dijkstra's Shortest Path Algorithm
+ 3. Max Heap / Priority Queue
+ 4. Urgency-First Strategy
+ 5. Demand-First Strategy
+ 6. Hybrid Priority Strategy
+ 7. Fairness / Waiting-Time Handling
+ 8. Dynamic Re-prioritization
+ 9. Warehouse Stock Management
+10. Vehicle Capacity Constraint
+11. Strategy Comparison
+12. Menu Driven Interface
+
+ Compile:
+ gcc main.c -o disaster_relief
+
+ Run:
+ ./disaster_relief
+===============================================================
+*/
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <limits.h>
+
+#define MAX_NODES 20
+#define MAX_WAREHOUSES 5
+#define MAX_ZONES 10
+#define MAX_HEAP 50
+#define INF 999999
+
+/* ============================================================
+   DATA STRUCTURES
+   ============================================================ */
+
+/* Graph node */
+typedef struct GraphNode {
+    int vertex;
+    int distance;
+    int capacity;
+    struct GraphNode *next;
+} GraphNode;
+
+/* Warehouse */
+typedef struct {
+    int id;
+    char name[50];
+    int stock;
+    int x;
+    int y;
+} Warehouse;
+
+/* Disaster Zone */
+typedef struct {
+    int id;
+    char name[50];
+
+    int urgency;          /* 1 - 10 */
+    int demand;           /* percentage / demand units */
+    int population;
+    int requiredSupply;
+    int deliveredSupply;
+    int waitingTime;
+
+} DisasterZone;
+
+/* Delivery Request */
+typedef struct {
+
+    int warehouseId;
+    int zoneId;
+
+    int distance;
+    int routeCapacity;
+
+    float priority;
+
+} DeliveryRequest;
+
+/* Max Heap */
+typedef struct {
+
+    DeliveryRequest heap[MAX_HEAP];
+    int size;
+
+} MaxHeap;
+
+
+/* ============================================================
+   GLOBAL VARIABLES
+   ============================================================ */
+
+GraphNode *graph[MAX_NODES];
+
+Warehouse warehouses[MAX_WAREHOUSES];
+DisasterZone zones[MAX_ZONES];
+
+int warehouseCount = 0;
+int zoneCount = 0;
+int nodeCount = 0;
+
+
+/* ============================================================
+   UTILITY FUNCTIONS
+   ============================================================ */
+
+void clearInputBuffer()
+{
+    int c;
+
+    while ((c = getchar()) != '\n' && c != EOF)
+        ;
+}
+
+
+/* ============================================================
+   GRAPH FUNCTIONS
+   ============================================================ */
+
+/*
+ Add one directed edge.
+*/
+void addEdge(int source, int destination,
+             int distance, int capacity)
+{
+    GraphNode *newNode =
+        (GraphNode *)malloc(sizeof(GraphNode));
+
+    if (newNode == NULL)
+    {
+        printf("Memory allocation failed.\n");
+        exit(1);
+    }
+
+    newNode->vertex = destination;
+    newNode->distance = distance;
+    newNode->capacity = capacity;
+
+    newNode->next = graph[source];
+
+    graph[source] = newNode;
+}
+
+
+/*
+ Add an undirected route.
+*/
+void addRoute(int source, int destination,
+              int distance, int capacity)
+{
+    addEdge(source, destination, distance, capacity);
+    addEdge(destination, source, distance, capacity);
+}
+
+
+/*
+ Initialize graph.
+*/
+void initializeGraph()
+{
+    int i;
+
+    for (i = 0; i < MAX_NODES; i++)
+        graph[i] = NULL;
+}
+
+
+/*
+ Display graph.
+*/
+void displayNetwork()
+{
+    int i;
+
+    printf("\n");
+    printf("=================================================\n");
+    printf("             TRANSPORT NETWORK\n");
+    printf("=================================================\n");
+
+    for (i = 0; i < nodeCount; i++)
+    {
+        GraphNode *current = graph[i];
+
+        printf("Node %d -> ", i);
+
+        while (current != NULL)
+        {
+            printf(
+                "[Node %d | %d km | Capacity %d] -> ",
+                current->vertex,
+                current->distance,
+                current->capacity
+            );
+
+            current = current->next;
+        }
+
+        printf("NULL\n");
+    }
+
+    printf("=================================================\n");
+}
+
+
+/* ============================================================
+   DIJKSTRA'S SHORTEST PATH ALGORITHM
+   ============================================================ */
+
+void dijkstra(int source, int distances[])
+{
+    int visited[MAX_NODES];
+
+    int i;
+    int count;
+
+    for (i = 0; i < nodeCount; i++)
+    {
+        distances[i] = INF;
+        visited[i] = 0;
+    }
+
+    distances[source] = 0;
+
+    for (count = 0; count < nodeCount; count++)
+    {
+        int u = -1;
+        int minimum = INF;
+
+        /*
+         Find the unvisited node
+         with minimum distance.
+        */
+        for (i = 0; i < nodeCount; i++)
+        {
+            if (!visited[i] &&
+                distances[i] < minimum)
+            {
+                minimum = distances[i];
+                u = i;
+            }
+        }
+
+        if (u == -1)
+            break;
+
+        visited[u] = 1;
+
+        /*
+         Relax adjacent edges.
+        */
+        GraphNode *current = graph[u];
+
+        while (current != NULL)
+        {
+            int v = current->vertex;
+
+            if (!visited[v] &&
+                distances[u] != INF &&
+                distances[u] + current->distance
+                    < distances[v])
+            {
+                distances[v] =
+                    distances[u] +
+                    current->distance;
+            }
+
+            current = current->next;
+        }
+    }
+}
+
+
+/*
+ Get route capacity between two nodes.
+*/
+int getRouteCapacity(int source, int destination)
+{
+    GraphNode *current = graph[source];
+
+    while (current != NULL)
+    {
+        if (current->vertex == destination)
+            return current->capacity;
+
+        current = current->next;
+    }
+
+    return 0;
+}
+
+
+/* ============================================================
+   MAX HEAP FUNCTIONS
+   ============================================================ */
+
+void swapRequests(DeliveryRequest *a,
+                   DeliveryRequest *b)
+{
+    DeliveryRequest temp = *a;
+
+    *a = *b;
+    *b = temp;
+}
+
+
+/*
+ Initialize heap.
+*/
+void initializeHeap(MaxHeap *heap)
+{
+    heap->size = 0;
+}
+
+
+/*
+ Insert request into Max Heap.
+*/
+void insertHeap(MaxHeap *heap,
+                DeliveryRequest request)
+{
+    int index;
+    int parent;
+
+    if (heap->size >= MAX_HEAP)
+    {
+        printf("Priority queue is full.\n");
+        return;
+    }
+
+    index = heap->size;
+
+    heap->heap[index] = request;
+
+    heap->size++;
+
+    while (index > 0)
+    {
+        parent = (index - 1) / 2;
+
+        if (heap->heap[parent].priority >=
+            heap->heap[index].priority)
+        {
+            break;
+        }
+
+        swapRequests(
+            &heap->heap[parent],
+            &heap->heap[index]
+        );
+
+        index = parent;
+    }
+}
+
+
+/*
+ Remove highest-priority request.
+*/
+DeliveryRequest extractMax(MaxHeap *heap)
+{
+    DeliveryRequest result;
+
+    result.zoneId = -1;
+
+    if (heap->size <= 0)
+        return result;
+
+    result = heap->heap[0];
+
+    heap->size--;
+
+    if (heap->size > 0)
+        heap->heap[0] =
+            heap->heap[heap->size];
+
+    int index = 0;
+
+    while (1)
+    {
+        int left = 2 * index + 1;
+        int right = 2 * index + 2;
+        int largest = index;
+
+        if (left < heap->size &&
+            heap->heap[left].priority >
+            heap->heap[largest].priority)
+        {
+            largest = left;
+        }
+
+        if (right < heap->size &&
+            heap->heap[right].priority >
+            heap->heap[largest].priority)
+        {
+            largest = right;
+        }
+
+        if (largest == index)
+            break;
+
+        swapRequests(
+            &heap->heap[index],
+            &heap->heap[largest]
+        );
+
+        index = largest;
+    }
+
+    return result;
+}
+
+
+/*
+ Display heap.
+*/
+void displayHeap(MaxHeap *heap)
+{
+    int i;
+
+    printf("\n");
+    printf("=================================================\n");
+    printf("              PRIORITY QUEUE\n");
+    printf("=================================================\n");
+
+    for (i = 0; i < heap->size; i++)
+    {
+        printf(
+            "%d. Zone %d | Priority %.3f | Distance %d km\n",
+            i + 1,
+            heap->heap[i].zoneId,
+            heap->heap[i].priority,
+            heap->heap[i].distance
+        );
+    }
+
+    printf("=================================================\n");
+}
+
+
+/* ============================================================
+   PRIORITY STRATEGIES
+   ============================================================ */
+
+/*
+ Normalize demand to 0 - 1.
+*/
+float normalizeDemand(int demand)
+{
+    if (demand > 100)
+        demand = 100;
+
+    return demand / 100.0f;
+}
+
+
+/*
+ Normalize urgency to 0 - 1.
+*/
+float normalizeUrgency(int urgency)
+{
+    if (urgency > 10)
+        urgency = 10;
+
+    if (urgency < 0)
+        urgency = 0;
+
+    return urgency / 10.0f;
+}
+
+
+/*
+ Distance score.
+
+ Shorter distance gets higher score.
+*/
+float distanceScore(int distance)
+{
+    if (distance <= 0)
+        return 1.0f;
+
+    return 1.0f / (1.0f + distance);
+}
+
+
+/*
+ Strategy 1:
+ Urgency First
+*/
+float urgencyFirst(int urgency)
+{
+    return normalizeUrgency(urgency);
+}
+
+
+/*
+ Strategy 2:
+ Demand First
+*/
+float demandFirst(int demand)
+{
+    return normalizeDemand(demand);
+}
+
+
+/*
+ Strategy 3:
+ Hybrid strategy.
+
+ 50% urgency
+ 30% demand
+ 20% distance
+*/
+float hybridPriority(int urgency,
+                     int demand,
+                     int distance)
+{
+    float u = normalizeUrgency(urgency);
+    float d = normalizeDemand(demand);
+    float dist = distanceScore(distance);
+
+    return
+        (0.50f * u) +
+        (0.30f * d) +
+        (0.20f * dist);
+}
+
+
+/*
+ Fairness-aware hybrid strategy.
+
+ Waiting time increases priority gradually.
+*/
+float fairHybridPriority(int urgency,
+                         int demand,
+                         int distance,
+                         int waitingTime)
+{
+    float base =
+        hybridPriority(
+            urgency,
+            demand,
+            distance
+        );
+
+    float fairnessBonus =
+        waitingTime * 0.02f;
+
+    return base + fairnessBonus;
+}
+
+
+/* ============================================================
+   FIND BEST WAREHOUSE
+   ============================================================ */
+
+int findNearestWarehouse(int zoneNode,
+                         int distances[][MAX_NODES])
+{
+    int bestWarehouse = -1;
+    int bestDistance = INF;
+
+    int i;
+
+    for (i = 0; i < warehouseCount; i++)
+    {
+        int d = distances[i][zoneNode];
+
+        if (d < bestDistance &&
+            warehouses[i].stock > 0)
+        {
+            bestDistance = d;
+            bestWarehouse = i;
+        }
+    }
+
+    return bestWarehouse;
+}
+
+
+/* ============================================================
+   BUILD PRIORITY QUEUE
+   ============================================================ */
+
+void buildPriorityQueue(
+    MaxHeap *heap,
+    int strategy)
+{
+    int distances[MAX_WAREHOUSES][MAX_NODES];
+
+    int i;
+    int j;
+
+    initializeHeap(heap);
+
+    /*
+     Run Dijkstra from every warehouse.
+    */
+    for (i = 0; i < warehouseCount; i++)
+    {
+        dijkstra(
+            warehouses[i].id,
+            distances[i]
+        );
+    }
+
+    /*
+     Create one request for each zone.
+    */
+    for (i = 0; i < zoneCount; i++)
+    {
+        int zoneNode = zones[i].id;
+
+        int warehouse =
+            findNearestWarehouse(
+                zoneNode,
+                distances
+            );
+
+        if (warehouse == -1)
+            continue;
+
+        int shortestDistance =
+            distances[warehouse][zoneNode];
+
+        int routeCapacity =
+            getRouteCapacity(
+                warehouses[warehouse].id,
+                zoneNode
+            );
+
+        DeliveryRequest request;
+
+        request.warehouseId =
+            warehouse;
+
+        request.zoneId =
+            i;
+
+        request.distance =
+            shortestDistance;
+
+        request.routeCapacity =
+            routeCapacity;
+
+        /*
+         Select priority strategy.
+        */
+
+        if (strategy == 1)
+        {
+            request.priority =
+                urgencyFirst(
+                    zones[i].urgency
+                );
+        }
+        else if (strategy == 2)
+        {
+            request.priority =
+                demandFirst(
+                    zones[i].demand
+                );
+        }
+        else
+        {
+            request.priority =
+                fairHybridPriority(
+                    zones[i].urgency,
+                    zones[i].demand,
+                    shortestDistance,
+                    zones[i].waitingTime
+                );
+        }
+
+        insertHeap(heap, request);
+    }
+}
+
+
+/* ============================================================
+   DISPLAY DISASTER ZONES
+   ============================================================ */
+
+void displayZones()
+{
+    int i;
+
+    printf("\n");
+    printf("===============================================================\n");
+    printf("                    DISASTER ZONES\n");
+    printf("===============================================================\n");
+
+    printf(
+        "%-5s %-15s %-10s %-10s %-12s %-12s %-10s\n",
+        "ID",
+        "Zone",
+        "Urgency",
+        "Demand",
+        "Population",
+        "Required",
+        "Waiting"
+    );
+
+    printf("---------------------------------------------------------------\n");
+
+    for (i = 0; i < zoneCount; i++)
+    {
+        printf(
+            "%-5d %-15s %-10d %-10d %-12d %-12d %-10d\n",
+            zones[i].id,
+            zones[i].name,
+            zones[i].urgency,
+            zones[i].demand,
+            zones[i].population,
+            zones[i].requiredSupply,
+            zones[i].waitingTime
+        );
+    }
+
+    printf("===============================================================\n");
+}
+
+
+/* ============================================================
+   DISPLAY WAREHOUSES
+   ============================================================ */
+
+void displayWarehouses()
+{
+    int i;
+
+    printf("\n");
+    printf("=============================================\n");
+    printf("               WAREHOUSES\n");
+    printf("=============================================\n");
+
+    for (i = 0; i < warehouseCount; i++)
+    {
+        printf(
+            "Warehouse %d | %-15s | Stock: %d units\n",
+            warehouses[i].id,
+            warehouses[i].name,
+            warehouses[i].stock
+        );
+    }
+
+    printf("=============================================\n");
+}
+
+
+/* ============================================================
+   DISPATCH RELIEF
+   ============================================================ */
+
+void dispatchRelief(int strategy)
+{
+    MaxHeap heap;
+
+    int vehicleCapacity;
+
+    int totalDelivered = 0;
+    int totalDistance = 0;
+
+    int deliveries = 0;
+
+    printf("\nEnter vehicle capacity: ");
+
+    if (scanf("%d", &vehicleCapacity) != 1)
+    {
+        clearInputBuffer();
+        printf("Invalid input.\n");
+        return;
+    }
+
+    if (vehicleCapacity <= 0)
+    {
+        printf("Vehicle capacity must be positive.\n");
+        return;
+    }
+
+    /*
+     Build priority queue.
+    */
+    buildPriorityQueue(
+        &heap,
+        strategy
+    );
+
+    if (heap.size == 0)
+    {
+        printf("No delivery requests available.\n");
+        return;
+    }
+
+    printf("\n");
+    printf("===============================================================\n");
+    printf("                    RELIEF DISPATCH\n");
+    printf("===============================================================\n");
+
+    /*
+     Process highest priority requests.
+    */
+    while (heap.size > 0)
+    {
+        DeliveryRequest request =
+            extractMax(&heap);
+
+        int zoneIndex =
+            request.zoneId;
+
+        int warehouseIndex =
+            request.warehouseId;
+
+        if (zoneIndex < 0)
+            continue;
+
+        /*
+         Check warehouse stock.
+        */
+        if (warehouses[warehouseIndex].stock <= 0)
+        {
+            printf(
+                "Warehouse %d has no stock.\n",
+                warehouseIndex
+            );
+
+            continue;
+        }
+
+        /*
+         Determine quantity to deliver.
+        */
+        int quantity =
+            zones[zoneIndex].requiredSupply;
+
+        if (quantity > vehicleCapacity)
+            quantity = vehicleCapacity;
+
+        if (quantity >
+            warehouses[warehouseIndex].stock)
+        {
+            quantity =
+                warehouses[warehouseIndex].stock;
+        }
+
+        /*
+         Display dispatch.
+        */
+        printf("\n");
+        printf("Dispatch #%d\n",
+               deliveries + 1);
+
+        printf(
+            "Warehouse : %s\n",
+            warehouses[warehouseIndex].name
+        );
+
+        printf(
+            "Zone      : %s\n",
+            zones[zoneIndex].name
+        );
+
+        printf(
+            "Urgency   : %d/10\n",
+            zones[zoneIndex].urgency
+        );
+
+        printf(
+            "Demand    : %d\n",
+            zones[zoneIndex].demand
+        );
+
+        printf(
+            "Distance  : %d km\n",
+            request.distance
+        );
+
+        printf(
+            "Priority  : %.3f\n",
+            request.priority
+        );
+
+        printf(
+            "Quantity  : %d units\n",
+            quantity
+        );
+
+        /*
+         Capacity warning.
+        */
+        if (quantity <
+            zones[zoneIndex].requiredSupply)
+        {
+            printf(
+                "Status    : PARTIAL DELIVERY\n"
+            );
+        }
+        else
+        {
+            printf(
+                "Status    : FULL DELIVERY\n"
+            );
+        }
+
+        /*
+         Update stock.
+        */
+        warehouses[warehouseIndex].stock
+            -= quantity;
+
+        /*
+         Update zone demand.
+        */
+        zones[zoneIndex].requiredSupply
+            -= quantity;
+
+        zones[zoneIndex].deliveredSupply
+            += quantity;
+
+        /*
+         Update demand percentage.
+        */
+        if (zones[zoneIndex].requiredSupply <= 0)
+        {
+            zones[zoneIndex].demand = 0;
+        }
+        else
+        {
+            zones[zoneIndex].demand -=
+                quantity / 2;
+
+            if (zones[zoneIndex].demand < 0)
+                zones[zoneIndex].demand = 0;
+        }
+
+        totalDelivered += quantity;
+
+        totalDistance +=
+            request.distance;
+
+        deliveries++;
+    }
+
+    printf("\n");
+    printf("===============================================================\n");
+    printf("                  DISPATCH SUMMARY\n");
+    printf("===============================================================\n");
+
+    printf(
+        "Total Deliveries       : %d\n",
+        deliveries
+    );
+
+    printf(
+        "Total Supply Delivered : %d units\n",
+        totalDelivered
+    );
+
+    printf(
+        "Total Distance Travelled: %d km\n",
+        totalDistance
+    );
+
+    if (deliveries > 0)
+    {
+        printf(
+            "Average Delivery Distance: %.2f km\n",
+            (float)totalDistance /
+            deliveries
+        );
+    }
+
+    printf("===============================================================\n");
+}
+
+
+/* ============================================================
+   DISPLAY PRIORITIES
+   ============================================================ */
+
+void displayPriorities()
+{
+    MaxHeap urgencyHeap;
+    MaxHeap demandHeap;
+    MaxHeap hybridHeap;
+
+    int i;
+
+    buildPriorityQueue(
+        &urgencyHeap,
+        1
+    );
+
+    buildPriorityQueue(
+        &demandHeap,
+        2
+    );
+
+    buildPriorityQueue(
+        &hybridHeap,
+        3
+    );
+
+    printf("\n");
+    printf("===============================================================\n");
+    printf("                  PRIORITY COMPARISON\n");
+    printf("===============================================================\n");
+
+    printf("\nURGECY-FIRST STRATEGY\n");
+    printf("------------------------------\n");
+
+    while (urgencyHeap.size > 0)
+    {
+        DeliveryRequest r =
+            extractMax(&urgencyHeap);
+
+        printf(
+            "Zone %-3d Priority %.3f\n",
+            r.zoneId,
+            r.priority
+        );
+    }
+
+    printf("\nDEMAND-FIRST STRATEGY\n");
+    printf("------------------------------\n");
+
+    while (demandHeap.size > 0)
+    {
+        DeliveryRequest r =
+            extractMax(&demandHeap);
+
+        printf(
+            "Zone %-3d Priority %.3f\n",
+            r.zoneId,
+            r.priority
+        );
+    }
+
+    printf("\nHYBRID + FAIRNESS STRATEGY\n");
+    printf("------------------------------\n");
+
+    while (hybridHeap.size > 0)
+    {
+        DeliveryRequest r =
+            extractMax(&hybridHeap);
+
+        printf(
+            "Zone %-3d Priority %.3f\n",
+            r.zoneId,
+            r.priority
+        );
+    }
+
+    printf("===============================================================\n");
+}
+
+
+/* ============================================================
+   SHORTEST ROUTES
+   ============================================================ */
+
+void displayShortestRoutes()
+{
+    int distances[MAX_NODES];
+
+    int i;
+
+    printf("\n");
+    printf("===============================================================\n");
+    printf("                   SHORTEST ROUTES\n");
+    printf("===============================================================\n");
+
+    for (i = 0; i < warehouseCount; i++)
+    {
+        dijkstra(
+            warehouses[i].id,
+            distances
+        );
+
+        printf("\nFrom %s:\n",
+               warehouses[i].name);
+
+        int j;
+
+        for (j = 0; j < zoneCount; j++)
+        {
+            int zoneNode =
+                zones[j].id;
+
+            if (distances[zoneNode] == INF)
+            {
+                printf(
+                    "  -> %s : No route\n",
+                    zones[j].name
+                );
+            }
+            else
+            {
+                printf(
+                    "  -> %-15s : %d km\n",
+                    zones[j].name,
+                    distances[zoneNode]
+                );
+            }
+        }
+    }
+
+    printf("===============================================================\n");
+}
+
+
+/* ============================================================
+   UPDATE URGENCY
+   ============================================================ */
+
+void updateZoneUrgency()
+{
+    int zone;
+    int urgency;
+
+    displayZones();
+
+    printf("\nEnter Zone ID to update: ");
+
+    if (scanf("%d", &zone) != 1)
+    {
+        clearInputBuffer();
+        printf("Invalid input.\n");
+        return;
+    }
+
+    if (zone < 0 || zone >= zoneCount)
+    {
+        printf("Invalid zone ID.\n");
+        return;
+    }
+
+    printf(
+        "Enter new urgency (1-10): "
+    );
+
+    if (scanf("%d", &urgency) != 1)
+    {
+        clearInputBuffer();
+        printf("Invalid input.\n");
+        return;
+    }
+
+    if (urgency < 1 || urgency > 10)
+    {
+        printf(
+            "Urgency must be between 1 and 10.\n"
+        );
+
+        return;
+    }
+
+    zones[zone].urgency =
+        urgency;
+
+    /*
+     Increase waiting time slightly
+     to demonstrate dynamic behaviour.
+    */
+    zones[zone].waitingTime = 0;
+
+    printf(
+        "\nUrgency successfully updated.\n"
+    );
+
+    printf(
+        "Zone: %s\n",
+        zones[zone].name
+    );
+
+    printf(
+        "New urgency: %d/10\n",
+        zones[zone].urgency
+    );
+
+    printf(
+        "Priority queue will be rebuilt automatically.\n"
+    );
+}
+
+
+/* ============================================================
+   INCREASE WAITING TIME
+   ============================================================ */
+
+void increaseWaitingTime()
+{
+    int i;
+
+    for (i = 0; i < zoneCount; i++)
+    {
+        if (zones[i].requiredSupply > 0)
+        {
+            zones[i].waitingTime++;
+        }
+    }
+
+    printf(
+        "\nWaiting time updated for pending zones.\n"
+    );
+}
+
+
+/* ============================================================
+   PERFORMANCE COMPARISON
+   ============================================================ */
+
+void performanceComparison()
+{
+    int i;
+
+    float urgencyTotal = 0;
+    float demandTotal = 0;
+    float hybridTotal = 0;
+
+    int urgencyHigh = 0;
+    int demandHigh = 0;
+    int hybridHigh = 0;
+
+    printf("\n");
+    printf("===============================================================\n");
+    printf("              PRIORITIZATION STRATEGY ANALYSIS\n");
+    printf("===============================================================\n");
+
+    for (i = 0; i < zoneCount; i++)
+    {
+        /*
+         Example distance used for
+         strategy comparison.
+        */
+
+        int distance = 10 + i * 5;
+
+        float u =
+            urgencyFirst(
+                zones[i].urgency
+            );
+
+        float d =
+            demandFirst(
+                zones[i].demand
+            );
+
+        float h =
+            fairHybridPriority(
+                zones[i].urgency,
+                zones[i].demand,
+                distance,
+                zones[i].waitingTime
+            );
+
+        urgencyTotal += u;
+        demandTotal += d;
+        hybridTotal += h;
+
+        if (zones[i].urgency >= 8)
+        {
+            if (u >= 0.8)
+                urgencyHigh++;
+
+            if (d >= 0.8)
+                demandHigh++;
+
+            if (h >= 0.6)
+                hybridHigh++;
+        }
+    }
+
+    printf("\n");
+    printf(
+        "%-25s %-15s %-15s\n",
+        "Strategy",
+        "Average Score",
+        "High Urgency"
+    );
+
+    printf(
+        "---------------------------------------------------------------\n"
+    );
+
+    printf(
+        "%-25s %-15.3f %-15d\n",
+        "Urgency First",
+        urgencyTotal / zoneCount,
+        urgencyHigh
+    );
+
+    printf(
+        "%-25s %-15.3f %-15d\n",
+        "Demand First",
+        demandTotal / zoneCount,
+        demandHigh
+    );
+
+    printf(
+        "%-25s %-15.3f %-15d\n",
+        "Hybrid + Fairness",
+        hybridTotal / zoneCount,
+        hybridHigh
+    );
+
+    printf(
+        "\nRecommended strategy: HYBRID + FAIRNESS\n"
+    );
+
+    printf(
+        "Reason: It balances urgency, demand, distance\n"
+        "and waiting time rather than optimizing only one factor.\n"
+    );
+
+    printf("===============================================================\n");
+}
+
+
+/* ============================================================
+   INITIALIZE SAMPLE DATA
+   ============================================================ */
+
+void initializeSampleData()
+{
+    /*
+     -----------------------------------------------------------
+     WAREHOUSES
+     Node IDs: 0, 1, 2
+     -----------------------------------------------------------
+    */
+
+    warehouseCount = 3;
+
+    warehouses[0].id = 0;
+
+    strcpy(
+        warehouses[0].name,
+        "Warehouse-A"
+    );
+
+    warehouses[0].stock = 500;
+
+
+    warehouses[1].id = 1;
+
+    strcpy(
+        warehouses[1].name,
+        "Warehouse-B"
+    );
+
+    warehouses[1].stock = 450;
+
+
+    warehouses[2].id = 2;
+
+    strcpy(
+        warehouses[2].name,
+        "Warehouse-C"
+    );
+
+    warehouses[2].stock = 400;
+
+
+    /*
+     -----------------------------------------------------------
+     DISASTER ZONES
+     Node IDs: 3 - 8
+     -----------------------------------------------------------
+    */
+
+    zoneCount = 6;
+
+    zones[0].id = 3;
+
+    strcpy(
+        zones[0].name,
+        "Zone-Alpha"
+    );
+
+    zones[0].urgency = 9;
+    zones[0].demand = 90;
+    zones[0].population = 5000;
+    zones[0].requiredSupply = 180;
+    zones[0].deliveredSupply = 0;
+    zones[0].waitingTime = 0;
+
+
+    zones[1].id = 4;
+
+    strcpy(
+        zones[1].name,
+        "Zone-Beta"
+    );
+
+    zones[1].urgency = 7;
+    zones[1].demand = 75;
+    zones[1].population = 3500;
+    zones[1].requiredSupply = 140;
+    zones[1].deliveredSupply = 0;
+    zones[1].waitingTime = 1;
+
+
+    zones[2].id = 5;
+
+    strcpy(
+        zones[2].name,
+        "Zone-Gamma"
+    );
+
+    zones[2].urgency = 5;
+    zones[2].demand = 80;
+    zones[2].population = 4200;
+    zones[2].requiredSupply = 160;
+    zones[2].deliveredSupply = 0;
+    zones[2].waitingTime = 2;
+
+
+    zones[3].id = 6;
+
+    strcpy(
+        zones[3].name,
+        "Zone-Delta"
+    );
+
+    zones[3].urgency = 8;
+    zones[3].demand = 60;
+    zones[3].population = 2800;
+    zones[3].requiredSupply = 120;
+    zones[3].deliveredSupply = 0;
+    zones[3].waitingTime = 3;
+
+
+    zones[4].id = 7;
+
+    strcpy(
+        zones[4].name,
+        "Zone-Epsilon"
+    );
+
+    zones[4].urgency = 4;
+    zones[4].demand = 55;
+    zones[4].population = 2200;
+    zones[4].requiredSupply = 100;
+    zones[4].deliveredSupply = 0;
+    zones[4].waitingTime = 4;
+
+
+    zones[5].id = 8;
+
+    strcpy(
+        zones[5].name,
+        "Zone-Zeta"
+    );
+
+    zones[5].urgency = 10;
+    zones[5].demand = 95;
+    zones[5].population = 6000;
+    zones[5].requiredSupply = 200;
+    zones[5].deliveredSupply = 0;
+    zones[5].waitingTime = 0;
+
+
+    /*
+     Total nodes:
+     0,1,2 = warehouses
+     3,4,5,6,7,8 = disaster zones
+    */
+
+    nodeCount = 9;
+
+
+    /*
+     -----------------------------------------------------------
+     TRANSPORT NETWORK
+     -----------------------------------------------------------
+
+     addRoute(
+         source,
+         destination,
+         distance,
+         capacity
+     );
+    */
+
+    addRoute(0, 1, 10, 200);
+    addRoute(0, 3, 15, 100);
+    addRoute(0, 4, 25, 100);
+
+    addRoute(1, 2, 12, 150);
+    addRoute(1, 4, 10, 120);
+    addRoute(1, 5, 20, 100);
+
+    addRoute(2, 5, 8, 100);
+    addRoute(2, 6, 18, 100);
+
+    addRoute(3, 4, 12, 80);
+    addRoute(3, 6, 30, 60);
+
+    addRoute(4, 5, 10, 80);
+    addRoute(4, 7, 20, 70);
+
+    addRoute(5, 6, 12, 80);
+    addRoute(5, 8, 25, 70);
+
+    addRoute(6, 7, 10, 60);
+    addRoute(6, 8, 15, 70);
+
+    addRoute(7, 8, 10, 50);
+}
+
+
+/* ============================================================
+   RESET DATA
+   ============================================================ */
+
+void resetData()
+{
+    int i;
+
+    /*
+     Reset warehouse stock.
+    */
+
+    warehouses[0].stock = 500;
+    warehouses[1].stock = 450;
+    warehouses[2].stock = 400;
+
+
+    /*
+     Reset zone supply.
+    */
+
+    int supply[] =
+    {
+        180,
+        140,
+        160,
+        120,
+        100,
+        200
+    };
+
+    int demand[] =
+    {
+        90,
+        75,
+        80,
+        60,
+        55,
+        95
+    };
+
+    for (i = 0; i < zoneCount; i++)
+    {
+        zones[i].requiredSupply =
+            supply[i];
+
+        zones[i].deliveredSupply =
+            0;
+
+        zones[i].demand =
+            demand[i];
+    }
+
+    printf(
+        "\nSystem data reset successfully.\n"
+    );
+}
+
+
+/* ============================================================
+   MENU
+   ============================================================ */
+
+void displayMenu()
+{
+    printf("\n\n");
+
+    printf("===============================================================\n");
+    printf("       INTELLIGENT DISASTER-RELIEF SUPPLY CHAIN\n");
+    printf("===============================================================\n");
+
+    printf("1. Display Warehouses\n");
+    printf("2. Display Disaster Zones\n");
+    printf("3. Display Transport Network\n");
+    printf("4. Find Shortest Routes\n");
+    printf("5. Calculate Priority Queue\n");
+    printf("6. Run Urgency-First Dispatch\n");
+    printf("7. Run Demand-First Dispatch\n");
+    printf("8. Run Hybrid + Fairness Dispatch\n");
+    printf("9. Update Zone Urgency\n");
+    printf("10. Increase Waiting Time\n");
+    printf("11. Compare Prioritization Strategies\n");
+    printf("12. Reset Simulation Data\n");
+    printf("0. Exit\n");
+
+    printf("===============================================================\n");
+
+    printf("Enter your choice: ");
+}
+
+
+/* ============================================================
+   MAIN FUNCTION
+   ============================================================ */
+
+int main()
+{
+    int choice;
+
+    initializeGraph();
+
+    initializeSampleData();
+
+    printf("\n");
+    printf("***************************************************************\n");
+    printf("*                                                             *\n");
+    printf("*       INTELLIGENT DISASTER-RELIEF SUPPLY CHAIN              *\n");
+    printf("*                                                             *\n");
+    printf("*       Graph + Dijkstra + Max Heap + Priority Queue          *\n");
+    printf("*                                                             *\n");
+    printf("***************************************************************\n");
+
+    do
+    {
+        displayMenu();
+
+        if (scanf("%d", &choice) != 1)
+        {
+            clearInputBuffer();
+
+            printf(
+                "\nInvalid input. Please enter a number.\n"
+            );
+
+            continue;
+        }
+
+        switch (choice)
+        {
+            case 1:
+
+                displayWarehouses();
+
+                break;
+
+
+            case 2:
+
+                displayZones();
+
+                break;
+
+
+            case 3:
+
+                displayNetwork();
+
+                break;
+
+
+            case 4:
+
+                displayShortestRoutes();
+
+                break;
+
+
+            case 5:
+            {
+                MaxHeap heap;
+
+                int strategy;
+
+                printf("\n");
+                printf("Select strategy:\n");
+                printf("1. Urgency First\n");
+                printf("2. Demand First\n");
+                printf("3. Hybrid + Fairness\n");
+
+                printf(
+                    "Enter strategy: "
+                );
+
+                scanf("%d", &strategy);
+
+                if (strategy < 1 ||
+                    strategy > 3)
+                {
+                    printf(
+                        "Invalid strategy.\n"
+                    );
+
+                    break;
+                }
+
+                buildPriorityQueue(
+                    &heap,
+                    strategy
+                );
+
+                displayHeap(&heap);
+
+                break;
+            }
+
+
+            case 6:
+
+                resetData();
+
+                printf(
+                    "\nRunning Urgency-First Strategy...\n"
+                );
+
+                dispatchRelief(1);
+
+                break;
+
+
+            case 7:
+
+                resetData();
+
+                printf(
+                    "\nRunning Demand-First Strategy...\n"
+                );
+
+                dispatchRelief(2);
+
+                break;
+
+
+            case 8:
+
+                resetData();
+
+                printf(
+                    "\nRunning Hybrid + Fairness Strategy...\n"
+                );
+
+                dispatchRelief(3);
+
+                break;
+
+
+            case 9:
+
+                updateZoneUrgency();
+
+                break;
+
+
+            case 10:
+
+                increaseWaitingTime();
+
+                break;
+
+
+            case 11:
+
+                performanceComparison();
+
+                break;
+
+
+            case 12:
+
+                resetData();
+
+                break;
+
+
+            case 0:
+
+                printf(
+                    "\nExiting Disaster Relief System...\n"
+                );
+
+                printf(
+                    "Thank you.\n"
+                );
+
+                break;
+
+
+            default:
+
+                printf(
+                    "\nInvalid choice. Please try again.\n"
+                );
+        }
+
+    } while (choice != 0);
+
+
+    /*
+     Free graph memory.
+    */
+
+    for (int i = 0; i < nodeCount; i++)
+    {
+        GraphNode *current =
+            graph[i];
+
+        while (current != NULL)
+        {
+            GraphNode *temp =
+                current;
+
+            current =
+                current->next;
+
+            free(temp);
+        }
+    }
+
+    return 0;
+}
