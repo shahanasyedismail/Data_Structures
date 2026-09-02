@@ -1,0 +1,79 @@
+ 13. Queue Operations: ENQUEUE, DEQUEUE, Display
+
+#include <stdio.h>
+
+#define MAX 100
+
+int queue[MAX], front = -1, rear = -1;
+
+void enqueue(int val) {
+    if (rear == MAX - 1) {
+        printf("Queue Overflow\n");
+        return;
+    }
+    if (front == -1)
+        front = 0;
+    queue[++rear] = val;
+    printf("%d enqueued\n", val);
+}
+
+void dequeue() {
+    if (front == -1 || front > rear) {
+        printf("Queue Underflow\n");
+        return;
+    }
+    printf("%d dequeued\n", queue[front++]);
+}
+
+void display() {
+    if (front == -1 || front > rear) {
+        printf("Queue is empty\n");
+        return;
+    }
+    printf("Queue: ");
+    for (int i = front; i <= rear; i++)
+        printf("%d ", queue[i]);
+    printf("\n");
+}
+
+int main() {
+    int choice, val;
+    do {
+        printf("\n1.Enqueue 2.Dequeue 3.Display 4.Exit\nEnter choice: ");
+        scanf("%d", &choice);
+        switch (choice) {
+            case 1:
+                printf("Enter value: ");
+                scanf("%d", &val);
+                enqueue(val);
+                break;
+            case 2: dequeue(); break;
+            case 3: display(); break;
+            case 4: printf("Exiting...\n"); break;
+            default: printf("Invalid choice\n");
+        }
+    } while (choice != 4);
+    return 0;
+}
+
+Sample Input:
+1
+10
+1
+20
+1
+30
+3
+2
+3
+4
+
+
+Sample Output:
+10 enqueued
+20 enqueued
+30 enqueued
+Queue: 10 20 30
+10 dequeued
+Queue: 20 30
+Exiting...
